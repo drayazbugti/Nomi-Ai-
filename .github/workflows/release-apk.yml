@@ -25,6 +25,12 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Accept Android SDK licenses
+        run: |
+          if [ -n "$ANDROID_HOME" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          fi
+
       - name: Prepare debug signing keystore
         run: |
           if [ -f debug.keystore.base64 ] && [ -s debug.keystore.base64 ]; then
@@ -41,8 +47,9 @@ jobs:
       - name: Build APK
         run: gradle assembleDebug --no-daemon
 
-      - name: Stage APK artifact
+      - name: Verify and stage NoomiAI-v1.0.apk
         run: |
+          test -f app/build/outputs/apk/debug/app-debug.apk
           cp app/build/outputs/apk/debug/app-debug.apk NoomiAI-v1.0.apk
           ls -lh NoomiAI-v1.0.apk
 
@@ -67,9 +74,10 @@ jobs:
           body: |
             Latest build of **Noomi AI** (`com.aistudio.noomiai.krmvqt`, v1.0 / Build 1).
 
-            Direct APK Download:
-            https://github.com/${{ github.repository }}/releases/latest/download/NoomiAI-v1.0.apk
+            [Download NoomiAI-v1.0.apk](https://github.com/${{ github.repository }}/releases/latest/download/NoomiAI-v1.0.apk)
           files: NoomiAI-v1.0.apk
+          draft: false
           prerelease: false
-          make_latest: true
+          make_latest: 'true'
           overwrite_files: true
+          fail_on_unmatched_files: true
