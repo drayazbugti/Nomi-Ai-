@@ -1,0 +1,30 @@
+<resources>
+    <string name="app_name">Noomi AI</string>
+    <string name="upload_button_label">Upload</string>
+    <string name="offline_no_internet_message">No internet connection. Please check the internet connection.</string>
+    <string name="command_prompt_placeholder">What do you want to make?</string>
+    <string name="option_image">Image</string>
+    <string name="option_video">Video</string>
+    <string name="option_ratio_landscape">16:9</string>
+    <string name="option_ratio_portrait">9:16</string>
+    <string name="menu_rename">Rename</string>
+    <string name="menu_grid_large">Grid: Large</string>
+    <string name="menu_grid_compact">Grid: Compact</string>
+    <string name="menu_view_trash">View trash</string>
+    <string name="menu_delete_project">Delete project</string>
+    <string name="menu_toggle_theme">Toggle Theme</string>
+    <string name="menu_new_session">New project</string>
+    <string name="search_placeholder">Search prompts or media…</string>
+    <string name="cd_back_sessions">Projects and sessions</string>
+    <string name="cd_history_prompts">Prompt history</string>
+    <string name="cd_search_assets">Search assets</string>
+    <string name="cd_close_search">Close search</string>
+    <string name="cd_more_options">More options</string>
+    <string name="cd_open_studio_options">Studio options</string>
+    <string name="cd_generate_submit">Generate asset</string>
+    <string name="cd_remove_reference">Remove reference image</string>
+    <string name="cd_share_asset">Share asset</string>
+    <string name="cd_export_asset">Export to device gallery</string>
+    <string name="cd_delete_asset">Move to trash</string>
+    <string name="cd_remix_asset">Remix with AI</string>
+</resources>

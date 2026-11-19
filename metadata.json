@@ -1,0 +1,6 @@
+{
+  "name": "Noomi AI",
+  "description": "AI creative studio for generating images, storyboard reels, and managing visual media assets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
