@@ -31,6 +31,7 @@ import com.example.R
 import com.example.ui.studio.components.AssetViewerDialog
 import com.example.ui.studio.components.CommandBar
 import com.example.ui.studio.components.DeleteProjectDialog
+import com.example.ui.studio.components.DownloadApkDialog
 import com.example.ui.studio.components.ExpandedGenerationProgressDialog
 import com.example.ui.studio.components.HistorySheet
 import com.example.ui.studio.components.OfflineConnectionPopup
@@ -116,7 +117,8 @@ fun StudioScreen(
                     onViewTrash = { viewModel.setTrashSheetOpen(true) },
                     onDeleteProject = { viewModel.setDeleteProjectDialogOpen(true) },
                     onToggleTheme = viewModel::toggleTheme,
-                    onNewSession = viewModel::createNewSession
+                    onNewSession = viewModel::createNewSession,
+                    onDownloadApk = { viewModel.setDownloadDialogOpen(true) }
                 )
 
                 StudioCanvas(
@@ -236,6 +238,12 @@ fun StudioScreen(
             projectTitle = uiState.activeSession?.title ?: "this project",
             onConfirm = viewModel::deleteActiveProject,
             onDismiss = { viewModel.setDeleteProjectDialogOpen(false) }
+        )
+    }
+
+    if (uiState.isDownloadDialogOpen) {
+        DownloadApkDialog(
+            onDismiss = { viewModel.setDownloadDialogOpen(false) }
         )
     }
 

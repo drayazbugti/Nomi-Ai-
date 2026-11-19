@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Download Noomi AI — Android APK (v1.0)</title>
+  <style>
+    :root {
+      --bg: #0d0d0d;
+      --surface: #161616;
+      --surface-elevated: #1e1e1e;
+      --text: #ffffff;
+      --text-muted: #a1a1aa;
+      --border: #282828;
+      --accent-bg: #ffffff;
+      --accent-fg: #0d0d0d;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f4f4f5;
+        --surface: #ffffff;
+        --surface-elevated: #ffffff;
+        --text: #111111;
+        --text-muted: #52525b;
+        --border: #e4e4e7;
+        --accent-bg: #111111;
+        --accent-fg: #ffffff;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      line-height: 1.5;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 520px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .badge-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .title-group h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .title-group p {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .download-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      min-height: 52px;
+      padding: 14px 20px;
+      border-radius: 999px;
+      background: var(--accent-bg);
+      color: var(--accent-fg);
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn-primary:hover {
+      opacity: 0.92;
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      min-height: 44px;
+      padding: 10px 16px;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+    }
+
+    .section {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .meta-item span {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .meta-item strong {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+
+    .steps {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .steps li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 14px;
+    }
+
+    .step-num {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .footer-note {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="header">
+      <div class="badge-icon" aria-hidden="true">N</div>
+      <div class="title-group">
+        <h1>Noomi AI</h1>
+        <p>Android Image &amp; Video Studio APK</p>
+      </div>
+    </div>
+
+    <div class="download-actions">
+      <a
+        id="apk-download-btn"
+        class="btn-primary"
+        href="https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/latest/download/NoomiAI-v1.0.apk"
+        download="NoomiAI-v1.0.apk"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        <span>Download Latest APK (v1.0)</span>
+      </a>
+      <a
+        id="releases-page-btn"
+        class="btn-secondary"
+        href="https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/latest"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        View Latest Release on GitHub
+      </a>
+    </div>
+
+    <section class="section" aria-label="Version details">
+      <div class="section-title">Version Details</div>
+      <div class="meta-grid">
+        <div class="meta-item">
+          <span>Version</span>
+          <strong>1.0 (Build 1)</strong>
+        </div>
+        <div class="meta-item">
+          <span>Android Requirement</span>
+          <strong>Android 7.0+ (API 24)</strong>
+        </div>
+        <div class="meta-item">
+          <span>Package ID</span>
+          <strong>com.aistudio.noomiai.krmvqt</strong>
+        </div>
+        <div class="meta-item">
+          <span>APK File</span>
+          <strong>NoomiAI-v1.0.apk</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-label="Installation instructions">
+      <div class="section-title">How to Download &amp; Install</div>
+      <ol class="steps">
+        <li>
+          <span class="step-num">1</span>
+          <span>Tap <strong>Download Latest APK (v1.0)</strong> above to download <code>NoomiAI-v1.0.apk</code> directly from GitHub Releases.</span>
+        </li>
+        <li>
+          <span class="step-num">2</span>
+          <span>Open the downloaded APK from your browser downloads or Android notification shade.</span>
+        </li>
+        <li>
+          <span class="step-num">3</span>
+          <span>If prompted by Android, select <strong>Settings</strong> and allow <strong>Install unknown apps</strong> for your browser or file manager.</span>
+        </li>
+        <li>
+          <span class="step-num">4</span>
+          <span>Tap <strong>Install</strong>, then launch <strong>Noomi AI</strong> from your home screen.</span>
+        </li>
+      </ol>
+    </section>
+
+    <p class="footer-note">
+      Hosted via GitHub Releases • Package com.aistudio.noomiai.krmvqt
+    </p>
+  </main>
+
+  <script>
+    (function () {
+      var host = window.location.hostname || "";
+      var pathParts = (window.location.pathname || "").split("/").filter(Boolean);
+      if (host.endsWith(".github.io") && pathParts.length > 0) {
+        var owner = host.replace(".github.io", "");
+        var repo = pathParts[0];
+        var base = "https://github.com/" + owner + "/" + repo + "/releases/latest";
+        document.getElementById("apk-download-btn").href = base + "/download/NoomiAI-v1.0.apk";
+        document.getElementById("releases-page-btn").href = base;
+      }
+    })();
+  </script>
+</body>
+</html>

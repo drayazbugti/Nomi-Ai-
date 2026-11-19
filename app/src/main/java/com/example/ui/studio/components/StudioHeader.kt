@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Contrast
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.History
@@ -75,6 +76,7 @@ fun StudioHeader(
     onDeleteProject: () -> Unit,
     onToggleTheme: () -> Unit,
     onNewSession: () -> Unit,
+    onDownloadApk: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -411,6 +413,26 @@ fun StudioHeader(
                                 onNewSession()
                             },
                             modifier = Modifier.testTag("new_session_item")
+                        )
+
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = stringResource(R.string.menu_download_apk),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Rounded.Download,
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onDownloadApk()
+                            },
+                            modifier = Modifier.testTag("menu_download_apk_item")
                         )
                     }
                 }

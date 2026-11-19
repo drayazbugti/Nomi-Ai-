@@ -93,6 +93,7 @@ data class StudioUiState(
     val isTrashSheetOpen: Boolean = false,
     val isRenameDialogOpen: Boolean = false,
     val isDeleteProjectDialogOpen: Boolean = false,
+    val isDownloadDialogOpen: Boolean = false,
     val isProgressExpanded: Boolean = false,
     val selectedAssetForViewer: StudioAssetEntity? = null,
     val generationState: GenerationUiState = GenerationUiState.Idle,
@@ -130,6 +131,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val _isTrashSheetOpen = MutableStateFlow(false)
     private val _isRenameDialogOpen = MutableStateFlow(false)
     private val _isDeleteProjectDialogOpen = MutableStateFlow(false)
+    private val _isDownloadDialogOpen = MutableStateFlow(false)
     private val _isProgressExpanded = MutableStateFlow(false)
     private val _selectedAssetIdForViewer = MutableStateFlow<String?>(null)
 
@@ -155,8 +157,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         combine(_isOptionsSheetOpen, _isSessionsSheetOpen, _isHistorySheetOpen, _isTrashSheetOpen) { opt, sess, hist, trash ->
             Quad(opt, sess, hist, trash)
         },
-        combine(_isRenameDialogOpen, _isDeleteProjectDialogOpen, _isProgressExpanded) { ren, del, exp ->
-            Triple(ren, del, exp)
+        combine(_isRenameDialogOpen, _isDeleteProjectDialogOpen, _isDownloadDialogOpen, _isProgressExpanded) { ren, del, dl, exp ->
+            Quad(ren, del, dl, exp)
         }
     ) { a, b ->
         SheetFlags(
@@ -166,7 +168,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             isTrashSheetOpen = a.fourth,
             isRenameDialogOpen = b.first,
             isDeleteProjectDialogOpen = b.second,
-            isProgressExpanded = b.third
+            isDownloadDialogOpen = b.third,
+            isProgressExpanded = b.fourth
         )
     }
 
@@ -306,6 +309,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             isTrashSheetOpen = controls.sheetFlags.isTrashSheetOpen,
             isRenameDialogOpen = controls.sheetFlags.isRenameDialogOpen,
             isDeleteProjectDialogOpen = controls.sheetFlags.isDeleteProjectDialogOpen,
+            isDownloadDialogOpen = controls.sheetFlags.isDownloadDialogOpen,
             isProgressExpanded = controls.sheetFlags.isProgressExpanded,
             selectedAssetForViewer = viewerAsset,
             generationState = controls.generationState,
@@ -506,6 +510,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setDeleteProjectDialogOpen(open: Boolean) {
         _isDeleteProjectDialogOpen.value = open
+    }
+
+    fun setDownloadDialogOpen(open: Boolean) {
+        _isDownloadDialogOpen.value = open
     }
 
     fun toggleSearch(active: Boolean) {
@@ -908,6 +916,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val isTrashSheetOpen: Boolean,
         val isRenameDialogOpen: Boolean,
         val isDeleteProjectDialogOpen: Boolean,
+        val isDownloadDialogOpen: Boolean,
         val isProgressExpanded: Boolean
     )
 

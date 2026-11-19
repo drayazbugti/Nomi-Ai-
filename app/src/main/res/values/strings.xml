@@ -14,6 +14,7 @@
     <string name="menu_delete_project">Delete project</string>
     <string name="menu_toggle_theme">Toggle Theme</string>
     <string name="menu_new_session">New project</string>
+    <string name="menu_download_apk">Download APK</string>
     <string name="search_placeholder">Search prompts or media…</string>
     <string name="cd_back_sessions">Projects and sessions</string>
     <string name="cd_history_prompts">Prompt history</string>
