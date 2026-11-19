@@ -14,6 +14,12 @@ interface StudioSessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSession(session: StudioSessionEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSessions(sessions: List<StudioSessionEntity>)
+
+    @Query("SELECT * FROM studio_sessions")
+    suspend fun getAllSessionsSnapshot(): List<StudioSessionEntity>
+
     @Query("UPDATE studio_sessions SET title = :title WHERE id = :sessionId")
     suspend fun updateSessionTitle(sessionId: String, title: String)
 
@@ -29,11 +35,17 @@ interface StudioAssetDao {
     @Query("SELECT * FROM studio_assets WHERE isTrashed = 1 ORDER BY trashedAt DESC")
     fun getTrashedAssets(): Flow<List<StudioAssetEntity>>
 
+    @Query("SELECT * FROM studio_assets")
+    suspend fun getAllAssetsSnapshot(): List<StudioAssetEntity>
+
     @Query("SELECT * FROM studio_assets WHERE sessionId = :sessionId")
     suspend fun getAllAssetsSnapshotForSession(sessionId: String): List<StudioAssetEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAsset(asset: StudioAssetEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAssets(assets: List<StudioAssetEntity>)
 
     @Query("UPDATE studio_assets SET isTrashed = 1, trashedAt = :trashedAt WHERE id = :assetId")
     suspend fun moveToTrash(assetId: String, trashedAt: Long)
@@ -65,8 +77,14 @@ interface PromptHistoryDao {
     @Query("SELECT * FROM prompt_history ORDER BY createdAt DESC")
     fun getAllHistory(): Flow<List<PromptHistoryEntity>>
 
+    @Query("SELECT * FROM prompt_history")
+    suspend fun getAllHistorySnapshot(): List<PromptHistoryEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertHistory(entry: PromptHistoryEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHistoryList(entries: List<PromptHistoryEntity>)
 
     @Query("DELETE FROM prompt_history WHERE id = :id")
     suspend fun deleteHistoryById(id: String)

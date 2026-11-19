@@ -14,7 +14,9 @@
     <string name="menu_delete_project">Delete project</string>
     <string name="menu_toggle_theme">Toggle Theme</string>
     <string name="menu_new_session">New project</string>
-    <string name="menu_download_apk">Download APK</string>
+    <string name="menu_sign_out">Sign out</string>
+    <string name="sign_in_with_google">Sign in with Google</string>
+    <string name="auth_subtitle">Sign in with your Google account to sync projects, prompt history, and studio assets.</string>
     <string name="search_placeholder">Search prompts or media…</string>
     <string name="cd_back_sessions">Projects and sessions</string>
     <string name="cd_history_prompts">Prompt history</string>

@@ -1,0 +1,188 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated Noomi AI studio user profile metadata",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID matching path {userId}"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address (optional)"
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Profile avatar URL (optional)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp written via FieldValue.serverTimestamp()"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp written via FieldValue.serverTimestamp()"
+        }
+      },
+      "required": ["userId", "displayName", "createdAt", "updatedAt"]
+    },
+    "StudioSession": {
+      "title": "StudioSession",
+      "description": "A creative project session grouping generated or uploaded assets",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner UID matching request.auth.uid"
+        },
+        "title": {
+          "type": "string",
+          "description": "Project session display title"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp written via FieldValue.serverTimestamp()"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp written via FieldValue.serverTimestamp()"
+        }
+      },
+      "required": ["userId", "title", "createdAt", "updatedAt"]
+    },
+    "StudioAsset": {
+      "title": "StudioAsset",
+      "description": "Metadata for an AI-generated image, storyboard reel, or uploaded media item",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner UID matching request.auth.uid"
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Parent StudioSession document ID"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["AI_IMAGE", "AI_STORYBOARD_REEL", "UPLOADED_IMAGE", "UPLOADED_VIDEO"],
+          "description": "Asset type identifier"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Prompt text or upload description"
+        },
+        "modelLabel": {
+          "type": "string",
+          "description": "Display name of the AI model or upload source"
+        },
+        "aspectRatio": {
+          "type": "string",
+          "description": "Aspect ratio label (16:9, 9:16, Original)"
+        },
+        "primaryFilePath": {
+          "type": "string",
+          "description": "Device-local file path for cached preview rendering"
+        },
+        "storyboardJson": {
+          "type": "string",
+          "description": "Optional serialized storyboard scenes metadata"
+        },
+        "trashed": {
+          "type": "boolean",
+          "description": "Soft-delete trash state"
+        },
+        "trashedAtMs": {
+          "type": "integer",
+          "description": "Optional epoch millis when moved to trash"
+        },
+        "generationDurationMs": {
+          "type": "integer",
+          "description": "Optional generation elapsed time in milliseconds"
+        },
+        "folderTag": {
+          "type": "string",
+          "description": "Optional user-assigned folder or category tag"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp written via FieldValue.serverTimestamp()"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp written via FieldValue.serverTimestamp()"
+        }
+      },
+      "required": ["userId", "sessionId", "kind", "prompt", "modelLabel", "aspectRatio", "primaryFilePath", "trashed", "createdAt", "updatedAt"]
+    },
+    "PromptHistory": {
+      "title": "PromptHistory",
+      "description": "Saved prompt entry for quick reuse in the History panel",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner UID matching request.auth.uid"
+        },
+        "promptText": {
+          "type": "string",
+          "description": "Prompt text submitted by the user"
+        },
+        "mediaMode": {
+          "type": "string",
+          "enum": ["IMAGE", "VIDEO"],
+          "description": "Media mode used for the prompt"
+        },
+        "aspectRatio": {
+          "type": "string",
+          "description": "Aspect ratio selected for the prompt"
+        },
+        "modelLabel": {
+          "type": "string",
+          "description": "Model label used for the prompt"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp written via FieldValue.serverTimestamp()"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp written via FieldValue.serverTimestamp()"
+        }
+      },
+      "required": ["userId", "promptText", "mediaMode", "aspectRatio", "modelLabel", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user profile document isolated by UID"
+    },
+    "/users/{userId}/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/StudioSession" },
+      "description": "User-owned studio project sessions"
+    },
+    "/users/{userId}/assets/{assetId}": {
+      "schema": { "$ref": "#/entities/StudioAsset" },
+      "description": "User-owned generated and uploaded asset metadata"
+    },
+    "/users/{userId}/prompt_history/{historyId}": {
+      "schema": { "$ref": "#/entities/PromptHistory" },
+      "description": "User-owned prompt history records"
+    }
+  }
+}

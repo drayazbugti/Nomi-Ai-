@@ -4,10 +4,18 @@ import android.app.Application
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.R
+import com.example.core.FirebaseSafety
 import com.example.core.NetworkConnectivityObserver
+import com.example.core.PromptModerationGuard
+import com.example.core.SilentPromptBlockedException
+import com.example.core.safeCurrentUser
 import com.example.data.StudioRepository
 import com.example.data.ai.AiCreationRepository
+import com.example.data.ai.FirebaseNotConfiguredException
 import com.example.data.ai.ImageModelOption
 import com.example.data.ai.VideoModelOption
 import com.example.data.local.AspectOption
@@ -21,6 +29,9 @@ import com.example.data.local.StoryboardScene
 import com.example.data.local.StudioAssetEntity
 import com.example.data.local.StudioSessionEntity
 import com.example.data.local.ThemePreferences
+import com.example.data.remote.FirestoreStudioRepository
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,6 +41,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -93,7 +105,6 @@ data class StudioUiState(
     val isTrashSheetOpen: Boolean = false,
     val isRenameDialogOpen: Boolean = false,
     val isDeleteProjectDialogOpen: Boolean = false,
-    val isDownloadDialogOpen: Boolean = false,
     val isProgressExpanded: Boolean = false,
     val selectedAssetForViewer: StudioAssetEntity? = null,
     val generationState: GenerationUiState = GenerationUiState.Idle,
@@ -101,7 +112,11 @@ data class StudioUiState(
 )
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-class StudioViewModel(application: Application) : AndroidViewModel(application) {
+class StudioViewModel(
+    application: Application,
+    private val currentUserId: String? = null,
+    private val firestoreRepository: FirestoreStudioRepository? = null
+) : AndroidViewModel(application) {
     private val database = NoomiDatabase.getInstance(application)
     private val mediaStorage = MediaStorageHelper(application)
     private val themePrefs = ThemePreferences(application)
@@ -110,9 +125,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         sessionDao = database.sessionDao(),
         assetDao = database.assetDao(),
         promptHistoryDao = database.promptHistoryDao(),
-        mediaStorage = mediaStorage
+        mediaStorage = mediaStorage,
+        firestoreRepository = firestoreRepository,
+        currentUserId = currentUserId
     )
-    private val aiRepository = AiCreationRepository(mediaStorage)
+    private val aiRepository = AiCreationRepository(application, mediaStorage)
 
     private val initialSettings = runBlocking(Dispatchers.IO) {
         themePrefs.getSettingsSnapshot()
@@ -131,7 +148,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val _isTrashSheetOpen = MutableStateFlow(false)
     private val _isRenameDialogOpen = MutableStateFlow(false)
     private val _isDeleteProjectDialogOpen = MutableStateFlow(false)
-    private val _isDownloadDialogOpen = MutableStateFlow(false)
     private val _isProgressExpanded = MutableStateFlow(false)
     private val _selectedAssetIdForViewer = MutableStateFlow<String?>(null)
 
@@ -157,8 +173,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         combine(_isOptionsSheetOpen, _isSessionsSheetOpen, _isHistorySheetOpen, _isTrashSheetOpen) { opt, sess, hist, trash ->
             Quad(opt, sess, hist, trash)
         },
-        combine(_isRenameDialogOpen, _isDeleteProjectDialogOpen, _isDownloadDialogOpen, _isProgressExpanded) { ren, del, dl, exp ->
-            Quad(ren, del, dl, exp)
+        combine(_isRenameDialogOpen, _isDeleteProjectDialogOpen, _isProgressExpanded) { ren, del, exp ->
+            Triple(ren, del, exp)
         }
     ) { a, b ->
         SheetFlags(
@@ -168,8 +184,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             isTrashSheetOpen = a.fourth,
             isRenameDialogOpen = b.first,
             isDeleteProjectDialogOpen = b.second,
-            isDownloadDialogOpen = b.third,
-            isProgressExpanded = b.fourth
+            isProgressExpanded = b.third
         )
     }
 
@@ -309,7 +324,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             isTrashSheetOpen = controls.sheetFlags.isTrashSheetOpen,
             isRenameDialogOpen = controls.sheetFlags.isRenameDialogOpen,
             isDeleteProjectDialogOpen = controls.sheetFlags.isDeleteProjectDialogOpen,
-            isDownloadDialogOpen = controls.sheetFlags.isDownloadDialogOpen,
             isProgressExpanded = controls.sheetFlags.isProgressExpanded,
             selectedAssetForViewer = viewerAsset,
             generationState = controls.generationState,
@@ -350,6 +364,56 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                         _activeSessionId.value = targetId
                     }
                 }
+            }
+        }
+
+        if (!currentUserId.isNullOrBlank() && firestoreRepository != null) {
+            viewModelScope.launch {
+                safeCurrentUser(getApplication())?.let { user ->
+                    firestoreRepository.upsertUserProfile(user)
+                }
+            }
+
+            viewModelScope.launch {
+                firestoreRepository.observeSessions(currentUserId)
+                    .catch { error ->
+                        val firestoreError = generateSequence(error) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (firestoreError == null && error is CancellationException) throw error
+                        Log.w(TAG, "Firestore sessions sync error", firestoreError ?: error)
+                    }
+                    .collect { remoteSessions ->
+                        studioRepository.syncSessionsFromRemote(remoteSessions)
+                    }
+            }
+
+            viewModelScope.launch {
+                firestoreRepository.observeAssets(currentUserId)
+                    .catch { error ->
+                        val firestoreError = generateSequence(error) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (firestoreError == null && error is CancellationException) throw error
+                        Log.w(TAG, "Firestore assets sync error", firestoreError ?: error)
+                    }
+                    .collect { remoteAssets ->
+                        studioRepository.syncAssetsFromRemote(remoteAssets)
+                    }
+            }
+
+            viewModelScope.launch {
+                firestoreRepository.observePromptHistory(currentUserId)
+                    .catch { error ->
+                        val firestoreError = generateSequence(error) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (firestoreError == null && error is CancellationException) throw error
+                        Log.w(TAG, "Firestore prompt history sync error", firestoreError ?: error)
+                    }
+                    .collect { remoteHistory ->
+                        studioRepository.syncPromptHistoryFromRemote(remoteHistory)
+                    }
             }
         }
     }
@@ -510,10 +574,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setDeleteProjectDialogOpen(open: Boolean) {
         _isDeleteProjectDialogOpen.value = open
-    }
-
-    fun setDownloadDialogOpen(open: Boolean) {
-        _isDownloadDialogOpen.value = open
     }
 
     fun toggleSearch(active: Boolean) {
@@ -710,6 +770,16 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     fun submitGeneration() {
         val prompt = _promptText.value.trim()
         if (prompt.isEmpty()) return
+
+        // Silent blocking for restricted, XXX, or sexually explicit prompts:
+        // Do not show any pre-warning or refusal message and do not generate media.
+        if (PromptModerationGuard.isRestrictedPrompt(prompt)) {
+            _promptText.value = ""
+            _attachedReferencePath.value = null
+            _lastError.value = null
+            return
+        }
+
         if (!networkObserver.isCurrentlyOnline()) {
             return
         }
@@ -721,6 +791,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val imageModel = snapshot.selectedImageModel
         val referencePath = _attachedReferencePath.value
         val active = snapshot.activeSession
+        val sessionTitle = active?.title ?: "Studio Project"
         val wasSessionEmpty = snapshot.totalSessionAssetCount == 0
 
         _promptText.value = ""
@@ -756,25 +827,15 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             var lastCreatedAsset: StudioAssetEntity? = null
+            var recordedMeta = false
             try {
                 val modelLabelForHistory = if (mode == MediaMode.IMAGE) {
                     imageModel.displayName
                 } else {
                     VideoModelOption.GEMINI_STORYBOARD_REEL.displayName
                 }
-                studioRepository.recordPromptHistory(
-                    promptText = prompt,
-                    mediaMode = mode.name,
-                    aspectRatio = aspect.label,
-                    modelLabel = modelLabelForHistory
-                )
 
                 val referenceBitmap = referencePath?.let { mediaStorage.loadScaledBitmap(it) }
-
-                if (active != null && wasSessionEmpty) {
-                    val conciseTitle = prompt.take(28).let { if (prompt.length > 28) "$it…" else it }
-                    studioRepository.renameSession(active.id, conciseTitle)
-                }
 
                 if (mode == MediaMode.IMAGE) {
                     for (idx in 0 until count) {
@@ -811,7 +872,20 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                             createdAt = System.currentTimeMillis(),
                             generationDurationMs = durationMs
                         )
-                        studioRepository.saveAsset(asset)
+                        studioRepository.saveAsset(asset, sessionTitle = sessionTitle)
+                        if (!recordedMeta) {
+                            recordedMeta = true
+                            studioRepository.recordPromptHistory(
+                                promptText = prompt,
+                                mediaMode = mode.name,
+                                aspectRatio = aspect.label,
+                                modelLabel = modelLabelForHistory
+                            )
+                            if (active != null && wasSessionEmpty) {
+                                val conciseTitle = prompt.take(28).let { if (prompt.length > 28) "$it…" else it }
+                                studioRepository.renameSession(active.id, conciseTitle)
+                            }
+                        }
                         lastCreatedAsset = asset
                         _generationProgressPercent.value = itemCeiling
                     }
@@ -856,7 +930,20 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                             createdAt = System.currentTimeMillis(),
                             generationDurationMs = durationMs
                         )
-                        studioRepository.saveAsset(asset)
+                        studioRepository.saveAsset(asset, sessionTitle = sessionTitle)
+                        if (!recordedMeta) {
+                            recordedMeta = true
+                            studioRepository.recordPromptHistory(
+                                promptText = prompt,
+                                mediaMode = mode.name,
+                                aspectRatio = aspect.label,
+                                modelLabel = modelLabelForHistory
+                            )
+                            if (active != null && wasSessionEmpty) {
+                                val conciseTitle = prompt.take(28).let { if (prompt.length > 28) "$it…" else it }
+                                studioRepository.renameSession(active.id, conciseTitle)
+                            }
+                        }
                         lastCreatedAsset = asset
                         _generationProgressPercent.value = (takeStart + takeSpan).toInt().coerceAtMost(95)
                     }
@@ -873,11 +960,29 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Generation failed", e)
+            } catch (_: SilentPromptBlockedException) {
                 _isProgressExpanded.value = false
-                _lastError.value = e.localizedMessage
-                    ?: "Generation failed. Please check your connection and try again."
+                _lastError.value = null
+            } catch (e: FirebaseNotConfiguredException) {
+                Log.w(TAG, "Firebase unavailable in this environment; skipping error banner.", e)
+                _isProgressExpanded.value = false
+                _lastError.value = null
+                _snackbarEvents.tryEmit("AI service unavailable: Firebase configuration missing in this build.")
+            } catch (e: Exception) {
+                if (PromptModerationGuard.isSafetyBlockException(e)) {
+                    _isProgressExpanded.value = false
+                    _lastError.value = null
+                } else {
+                    Log.e(TAG, "Generation failed", e)
+                    _isProgressExpanded.value = false
+                    if (FirebaseSafety.isFirebaseNotInitializedError(e)) {
+                        _lastError.value = null
+                        _snackbarEvents.tryEmit("AI service unavailable: Firebase configuration missing in this build.")
+                    } else {
+                        _lastError.value = e.localizedMessage
+                            ?: "Generation failed. Please check your connection and try again."
+                    }
+                }
             } finally {
                 tickerJob.cancel()
                 runningJobs.remove(launchedJob)
@@ -916,7 +1021,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val isTrashSheetOpen: Boolean,
         val isRenameDialogOpen: Boolean,
         val isDeleteProjectDialogOpen: Boolean,
-        val isDownloadDialogOpen: Boolean,
         val isProgressExpanded: Boolean
     )
 
@@ -933,4 +1037,29 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val sheetFlags: SheetFlags,
         val isOnline: Boolean
     )
+
+    companion object {
+        fun provideFactory(
+            application: Application,
+            currentUserId: String?
+        ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                val firestoreRepo = if (!currentUserId.isNullOrBlank() && FirebaseSafety.isInitialized(application)) {
+                    runCatching {
+                        val dbId = application.getString(R.string.firestore_database_id)
+                        val db = FirebaseFirestore.getInstance(dbId)
+                        FirestoreStudioRepository(db)
+                    }.getOrNull()
+                } else {
+                    null
+                }
+                return StudioViewModel(
+                    application = application,
+                    currentUserId = currentUserId,
+                    firestoreRepository = firestoreRepo
+                ) as T
+            }
+        }
+    }
 }

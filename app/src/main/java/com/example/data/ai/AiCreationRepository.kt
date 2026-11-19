@@ -1,15 +1,22 @@
 package com.example.data.ai
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.util.Log
 import com.caverock.androidsvg.SVG
+import com.example.core.FirebaseSafety
+import com.example.core.PromptModerationGuard
+import com.example.core.SilentPromptBlockedException
 import com.example.data.local.AspectOption
 import com.example.data.local.MediaStorageHelper
 import com.example.data.local.StoryboardScene
 import com.google.firebase.Firebase
 import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.ai
+import com.google.firebase.ai.type.HarmBlockThreshold
+import com.google.firebase.ai.type.HarmCategory
+import com.google.firebase.ai.type.SafetySetting
 import com.google.firebase.ai.type.Schema
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.generationConfig
@@ -29,6 +36,11 @@ import java.util.concurrent.ConcurrentHashMap
 private const val TAG = "AiCreationRepository"
 private const val REQUEST_TIMEOUT_MS = 60_000L
 
+class FirebaseNotConfiguredException(
+    message: String = "Firebase is not configured in this build.",
+    cause: Throwable? = null
+) : IllegalStateException(message, cause)
+
 data class PlannedScene(
     val sceneNumber: Int,
     val title: String,
@@ -38,8 +50,10 @@ data class PlannedScene(
 )
 
 class AiCreationRepository(
+    context: Context,
     private val mediaStorage: MediaStorageHelper
 ) {
+    private val appContext = context.applicationContext ?: context
     private val svgArtworkModelCache = ConcurrentHashMap<String, GenerativeModel>()
     private val storyboardModelCache = ConcurrentHashMap<String, GenerativeModel>()
 
@@ -76,27 +90,51 @@ class AiCreationRepository(
         )
     }
 
-    private fun getSvgArtworkModel(modelId: String): GenerativeModel {
-        return svgArtworkModelCache.getOrPut(modelId) {
-            Firebase.ai.generativeModel(
-                modelName = modelId,
-                generationConfig = generationConfig {
-                    responseMimeType = "application/json"
-                    responseSchema = svgArtworkSchema
-                }
-            )
+    private val strictSafetySettings = listOf(
+        SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, HarmBlockThreshold.LOW_AND_ABOVE)
+    )
+
+    private fun getSvgArtworkModelOrNull(modelId: String): GenerativeModel? {
+        if (!FirebaseSafety.isInitialized(appContext)) {
+            Log.w(TAG, "FirebaseApp is not initialized; skipping SVG model creation.")
+            return null
+        }
+        return try {
+            svgArtworkModelCache.getOrPut(modelId) {
+                Firebase.ai.generativeModel(
+                    modelName = modelId,
+                    generationConfig = generationConfig {
+                        responseMimeType = "application/json"
+                        responseSchema = svgArtworkSchema
+                    },
+                    safetySettings = strictSafetySettings
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to create Firebase AI model ($modelId)", e)
+            null
         }
     }
 
-    private fun getStoryboardPlannerModel(modelId: String): GenerativeModel {
-        return storyboardModelCache.getOrPut(modelId) {
-            Firebase.ai.generativeModel(
-                modelName = modelId,
-                generationConfig = generationConfig {
-                    responseMimeType = "application/json"
-                    responseSchema = storyboardSchema
-                }
-            )
+    private fun getStoryboardPlannerModelOrNull(modelId: String): GenerativeModel? {
+        if (!FirebaseSafety.isInitialized(appContext)) {
+            Log.w(TAG, "FirebaseApp is not initialized; skipping storyboard model creation.")
+            return null
+        }
+        return try {
+            storyboardModelCache.getOrPut(modelId) {
+                Firebase.ai.generativeModel(
+                    modelName = modelId,
+                    generationConfig = generationConfig {
+                        responseMimeType = "application/json"
+                        responseSchema = storyboardSchema
+                    },
+                    safetySettings = strictSafetySettings
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to create storyboard planner model ($modelId)", e)
+            null
         }
     }
 
@@ -152,6 +190,13 @@ class AiCreationRepository(
         referenceBitmap: Bitmap? = null,
         variationIndex: Int = 0
     ): String {
+        if (PromptModerationGuard.isRestrictedPrompt(prompt)) {
+            throw SilentPromptBlockedException()
+        }
+        if (!FirebaseSafety.isInitialized(appContext)) {
+            throw FirebaseNotConfiguredException()
+        }
+
         val (width, height) = when (aspect) {
             AspectOption.LANDSCAPE_16_9 -> 1280 to 720
             AspectOption.PORTRAIT_9_16 -> 720 to 1280
@@ -183,7 +228,8 @@ class AiCreationRepository(
 
         var lastError: Exception? = null
         for ((attempt, candidateModel) in modelSequence.withIndex()) {
-            val model = getSvgArtworkModel(candidateModel.modelId)
+            val model = getSvgArtworkModelOrNull(candidateModel.modelId)
+                ?: throw FirebaseNotConfiguredException()
             try {
                 val svgXml = withTimeout(REQUEST_TIMEOUT_MS) {
                     val response = if (referenceBitmap != null) {
@@ -216,6 +262,12 @@ class AiCreationRepository(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (PromptModerationGuard.isSafetyBlockException(e)) {
+                    throw SilentPromptBlockedException()
+                }
+                if (FirebaseSafety.isFirebaseNotInitializedError(e)) {
+                    throw FirebaseNotConfiguredException(cause = e)
+                }
                 if (isOfflineCause(e)) {
                     Log.e(TAG, "Offline network error during image generation", e)
                     throw IOException("No internet connection. Please check the internet connection.", e)
@@ -238,6 +290,12 @@ class AiCreationRepository(
         referenceBitmap: Bitmap? = null,
         onSceneProgress: (Int, Int, String) -> Unit
     ): List<StoryboardScene> {
+        if (PromptModerationGuard.isRestrictedPrompt(prompt)) {
+            throw SilentPromptBlockedException()
+        }
+        if (!FirebaseSafety.isInitialized(appContext)) {
+            throw FirebaseNotConfiguredException()
+        }
         onSceneProgress(0, 3, "Writing 3-scene storyboard with ${preferredModel.displayName}…")
 
         val plannerModelIds = listOf(
@@ -251,7 +309,8 @@ class AiCreationRepository(
         var plannerError: Exception? = null
 
         for ((attempt, modelId) in plannerModelIds.withIndex()) {
-            val plannerModel = getStoryboardPlannerModel(modelId)
+            val plannerModel = getStoryboardPlannerModelOrNull(modelId)
+                ?: throw FirebaseNotConfiguredException()
             try {
                 plannedScenes = withTimeout(REQUEST_TIMEOUT_MS) {
                     val plannerPrompt = """
@@ -293,6 +352,12 @@ class AiCreationRepository(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (PromptModerationGuard.isSafetyBlockException(e)) {
+                    throw SilentPromptBlockedException()
+                }
+                if (FirebaseSafety.isFirebaseNotInitializedError(e)) {
+                    throw FirebaseNotConfiguredException(cause = e)
+                }
                 if (isOfflineCause(e)) {
                     Log.e(TAG, "Offline network error during storyboard planning", e)
                     throw IOException("No internet connection. Please check the internet connection.", e)

@@ -1,0 +1,166 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 320)) &&
+             (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 1024)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSession(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAsset(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             isValidId(data.sessionId) &&
+             data.kind in ['AI_IMAGE', 'AI_STORYBOARD_REEL', 'UPLOADED_IMAGE', 'UPLOADED_VIDEO'] &&
+             data.prompt is string && data.prompt.size() >= 1 && data.prompt.size() <= 2000 &&
+             data.modelLabel is string && data.modelLabel.size() >= 1 && data.modelLabel.size() <= 120 &&
+             data.aspectRatio is string && data.aspectRatio.size() >= 1 && data.aspectRatio.size() <= 32 &&
+             data.primaryFilePath is string && data.primaryFilePath.size() >= 1 && data.primaryFilePath.size() <= 1024 &&
+             (!('storyboardJson' in data) || (data.storyboardJson is string && data.storyboardJson.size() <= 20000)) &&
+             data.trashed is bool &&
+             (!('trashedAtMs' in data) || (data.trashedAtMs is int && data.trashedAtMs >= 0)) &&
+             (!('generationDurationMs' in data) || (data.generationDurationMs is int && data.generationDurationMs >= 0)) &&
+             (!('folderTag' in data) || (data.folderTag is string && data.folderTag.size() >= 1 && data.folderTag.size() <= 60)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPromptHistory(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.promptText is string && data.promptText.size() >= 1 && data.promptText.size() <= 2000 &&
+             data.mediaMode in ['IMAGE', 'VIDEO'] &&
+             data.aspectRatio is string && data.aspectRatio.size() >= 1 && data.aspectRatio.size() <= 32 &&
+             data.modelLabel is string && data.modelLabel.size() >= 1 && data.modelLabel.size() <= 120 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'photoUrl', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoUrl', 'updatedAt']);
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      match /sessions/{sessionId} {
+        allow get: if isOwner(userId) && isValidId(sessionId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(sessionId) &&
+                         incoming().keys().hasAll(['userId', 'title', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'title', 'createdAt', 'updatedAt']) &&
+                         isValidSession(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+                         isValidId(sessionId) &&
+                         isValidSession(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['title', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(sessionId);
+      }
+
+      match /assets/{assetId} {
+        allow get: if isOwner(userId) && isValidId(assetId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(assetId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'sessionId', 'kind', 'prompt', 'modelLabel',
+                           'aspectRatio', 'primaryFilePath', 'trashed', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'sessionId', 'kind', 'prompt', 'modelLabel',
+                           'aspectRatio', 'primaryFilePath', 'storyboardJson', 'trashed',
+                           'trashedAtMs', 'generationDurationMs', 'folderTag', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidAsset(incoming(), userId) &&
+                         exists(/databases/$(database)/documents/users/$(userId)/sessions/$(incoming().sessionId));
+
+        allow update: if isOwner(userId) &&
+                         isValidId(assetId) &&
+                         isValidAsset(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().sessionId == existing().sessionId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'trashed', 'trashedAtMs', 'folderTag', 'updatedAt'
+                         ]);
+
+        allow delete: if isOwner(userId) && isValidId(assetId);
+      }
+
+      match /prompt_history/{historyId} {
+        allow get: if isOwner(userId) && isValidId(historyId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(historyId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'promptText', 'mediaMode', 'aspectRatio',
+                           'modelLabel', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'promptText', 'mediaMode', 'aspectRatio',
+                           'modelLabel', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidPromptHistory(incoming(), userId);
+
+        allow update: if false;
+
+        allow delete: if isOwner(userId) && isValidId(historyId);
+      }
+    }
+  }
+}
