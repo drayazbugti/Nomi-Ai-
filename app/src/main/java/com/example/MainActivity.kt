@@ -1,6 +1,7 @@
 package com.example
 
 import android.app.Application
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -27,6 +28,12 @@ import com.example.ui.studio.StudioViewModel
 import com.example.ui.theme.NoomiTheme
 
 class MainActivity : ComponentActivity() {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        configureAppCheck(this, intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 

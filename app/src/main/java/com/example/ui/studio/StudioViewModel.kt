@@ -8,13 +8,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.R
+import com.example.core.AppHealthInspector
 import com.example.core.FirebaseSafety
+import com.example.core.GenerationPhase
 import com.example.core.NetworkConnectivityObserver
 import com.example.core.PromptModerationGuard
+import com.example.core.PromptUnderstandingEngine
+import com.example.core.PromptUnderstandingResult
+import com.example.core.ServiceReadinessStatus
 import com.example.core.SilentPromptBlockedException
+import com.example.core.isAppCheckTokenError
 import com.example.core.safeCurrentUser
 import com.example.data.StudioRepository
 import com.example.data.ai.AiCreationRepository
+import com.example.data.ai.AppCheckUnavailableException
 import com.example.data.ai.FirebaseNotConfiguredException
 import com.example.data.ai.ImageModelOption
 import com.example.data.ai.VideoModelOption
@@ -121,6 +128,7 @@ class StudioViewModel(
     private val mediaStorage = MediaStorageHelper(application)
     private val themePrefs = ThemePreferences(application)
     private val networkObserver = NetworkConnectivityObserver(application)
+    private val healthInspector = AppHealthInspector(application, networkObserver)
     private val studioRepository = StudioRepository(
         sessionDao = database.sessionDao(),
         assetDao = database.assetDao(),
@@ -549,6 +557,7 @@ class StudioViewModel(
         _promptText.value = newPrompt
         if (_lastError.value != null) {
             _lastError.value = null
+            healthInspector.resetErrorTracking()
         }
     }
 
@@ -755,6 +764,7 @@ class StudioViewModel(
 
     fun dismissError() {
         _lastError.value = null
+        healthInspector.resetErrorTracking()
     }
 
     fun cancelGeneration() {
@@ -768,31 +778,35 @@ class StudioViewModel(
     }
 
     fun submitGeneration() {
-        val prompt = _promptText.value.trim()
-        if (prompt.isEmpty()) return
+        val rawPrompt = _promptText.value.trim()
+        if (rawPrompt.isEmpty()) return
 
-        // Silent blocking for restricted, XXX, or sexually explicit prompts:
-        // Do not show any pre-warning or refusal message and do not generate media.
-        if (PromptModerationGuard.isRestrictedPrompt(prompt)) {
-            _promptText.value = ""
-            _attachedReferencePath.value = null
-            _lastError.value = null
-            return
-        }
-
-        if (!networkObserver.isCurrentlyOnline()) {
-            return
-        }
-        val sessionId = _activeSessionId.value ?: return
         val snapshot = uiState.value
-        val mode = snapshot.selectedMode
-        val aspect = snapshot.selectedAspect
+
+        // Step 1: Prompt understanding & silent moderation check
+        val analyzedPrompt = PromptUnderstandingEngine.analyze(
+            rawPrompt = rawPrompt,
+            selectedMode = snapshot.selectedMode,
+            selectedAspect = snapshot.selectedAspect
+        )
+        val parsedIntent = when (analyzedPrompt) {
+            PromptUnderstandingResult.Empty -> return
+            PromptUnderstandingResult.BlockedSilently -> {
+                // Silent blocking for restricted, XXX, or sexually explicit prompts:
+                // Do not show any pre-warning or refusal message and do not generate media.
+                _promptText.value = ""
+                _attachedReferencePath.value = null
+                _lastError.value = null
+                return
+            }
+            is PromptUnderstandingResult.Ready -> analyzedPrompt.intent
+        }
+
+        val mode = parsedIntent.resolvedMode
+        val aspect = parsedIntent.resolvedAspect
         val count = snapshot.selectedCount
         val imageModel = snapshot.selectedImageModel
         val referencePath = _attachedReferencePath.value
-        val active = snapshot.activeSession
-        val sessionTitle = active?.title ?: "Studio Project"
-        val wasSessionEmpty = snapshot.totalSessionAssetCount == 0
 
         _promptText.value = ""
         _attachedReferencePath.value = null
@@ -802,12 +816,74 @@ class StudioViewModel(
         launchedJob = viewModelScope.launch {
             if (_activeGenerationCount.value == 0) {
                 _generationStartedAtMs.value = System.currentTimeMillis()
-                _generationProgressPercent.value = 4
+                _generationProgressPercent.value = 3
             }
-            _activeGenerationPrompt.value = prompt
+            _activeGenerationPrompt.value = parsedIntent.originalPrompt
             _activeGenerationMode.value = mode
             _activeGenerationAspect.value = aspect
+            _generationStatus.value = "Checking service health…"
             _activeGenerationCount.update { it + 1 }
+
+            // Step 2: Runtime self-check & recovery before running network/AI requests
+            val healthReport = healthInspector.inspectAndRecoverBeforeGeneration(
+                prompt = parsedIntent.originalPrompt,
+                mode = mode,
+                aspect = aspect,
+                activeSessionId = _activeSessionId.value,
+                activeGenerationCount = _activeGenerationCount.value,
+                ensureSessionReady = {
+                    val created = studioRepository.createSession()
+                    themePrefs.setActiveSessionId(created.id)
+                    _activeSessionId.value = created.id
+                    created.id
+                }
+            )
+
+            when (healthReport.readinessStatus) {
+                ServiceReadinessStatus.SKIPPED_DUPLICATE,
+                ServiceReadinessStatus.BLOCKED_OFFLINE -> {
+                    runningJobs.remove(launchedJob)
+                    _activeGenerationCount.update { (it - 1).coerceAtLeast(0) }
+                    if (_activeGenerationCount.value == 0) {
+                        _generationProgressPercent.value = 0
+                        _generationStatus.value = ""
+                        _generationStartedAtMs.value = 0L
+                        _isProgressExpanded.value = false
+                    }
+                    return@launch
+                }
+                ServiceReadinessStatus.BLOCKED_UNCONFIGURED -> {
+                    runningJobs.remove(launchedJob)
+                    _activeGenerationCount.update { (it - 1).coerceAtLeast(0) }
+                    if (_activeGenerationCount.value == 0) {
+                        _generationProgressPercent.value = 0
+                        _generationStatus.value = ""
+                        _generationStartedAtMs.value = 0L
+                        _isProgressExpanded.value = false
+                    }
+                    val notice = "AI service unavailable: Firebase configuration missing in this build."
+                    if (healthInspector.shouldEmitErrorMessage(notice)) {
+                        _snackbarEvents.tryEmit(notice)
+                    }
+                    return@launch
+                }
+                ServiceReadinessStatus.READY,
+                ServiceReadinessStatus.RECOVERED_AND_READY -> {
+                    if (_generationProgressPercent.value < 8) {
+                        _generationProgressPercent.value = 8
+                    }
+                }
+            }
+
+            val resolvedSessionId = _activeSessionId.value ?: run {
+                val created = studioRepository.createSession()
+                themePrefs.setActiveSessionId(created.id)
+                _activeSessionId.value = created.id
+                created.id
+            }
+            val active = uiState.value.activeSession
+            val sessionTitle = active?.title ?: "Studio Project"
+            val wasSessionEmpty = uiState.value.totalSessionAssetCount == 0
 
             val progressCeiling = MutableStateFlow(if (mode == MediaMode.IMAGE) 92 else 28)
             val tickerJob = launch {
@@ -840,7 +916,7 @@ class StudioViewModel(
                 if (mode == MediaMode.IMAGE) {
                     for (idx in 0 until count) {
                         val itemStartMs = System.currentTimeMillis()
-                        val itemBase = ((idx.toFloat() / count) * 90f).toInt().coerceAtLeast(4)
+                        val itemBase = ((idx.toFloat() / count) * 90f).toInt().coerceAtLeast(8)
                         val itemCeiling = (((idx + 1f) / count) * 94f).toInt().coerceIn(itemBase + 5, 95)
                         if (_generationProgressPercent.value < itemBase) {
                             _generationProgressPercent.value = itemBase
@@ -853,18 +929,31 @@ class StudioViewModel(
                             "Generating image • ${imageModel.displayName}…"
                         }
                         val filePath = aiRepository.generateImageAsset(
-                            prompt = prompt,
+                            prompt = parsedIntent.originalPrompt,
                             modelOption = imageModel,
                             aspect = aspect,
                             referenceBitmap = referenceBitmap,
-                            variationIndex = idx
+                            variationIndex = idx,
+                            parsedIntent = parsedIntent,
+                            onPhaseUpdate = { phase, label ->
+                                _generationStatus.value = when (phase) {
+                                    GenerationPhase.RECOVERING_ATTESTATION -> "Verifying service connection…"
+                                    GenerationPhase.RETRYING_FALLBACK -> "Refining image with $label…"
+                                    GenerationPhase.RENDERING_ASSET -> "Rendering final image…"
+                                    else -> if (count > 1) {
+                                        "Generating image ${idx + 1}/$count • $label…"
+                                    } else {
+                                        "Generating image • $label…"
+                                    }
+                                }
+                            }
                         )
                         val durationMs = (System.currentTimeMillis() - itemStartMs).coerceAtLeast(100L)
                         val asset = StudioAssetEntity(
                             id = UUID.randomUUID().toString(),
-                            sessionId = sessionId,
+                            sessionId = resolvedSessionId,
                             kind = AssetKind.AI_IMAGE.name,
-                            prompt = prompt,
+                            prompt = parsedIntent.originalPrompt,
                             modelLabel = imageModel.displayName,
                             aspectRatio = aspect.label,
                             primaryFilePath = filePath,
@@ -876,13 +965,15 @@ class StudioViewModel(
                         if (!recordedMeta) {
                             recordedMeta = true
                             studioRepository.recordPromptHistory(
-                                promptText = prompt,
+                                promptText = parsedIntent.originalPrompt,
                                 mediaMode = mode.name,
                                 aspectRatio = aspect.label,
                                 modelLabel = modelLabelForHistory
                             )
                             if (active != null && wasSessionEmpty) {
-                                val conciseTitle = prompt.take(28).let { if (prompt.length > 28) "$it…" else it }
+                                val conciseTitle = parsedIntent.cleanedSubject.take(28).let {
+                                    if (parsedIntent.cleanedSubject.length > 28) "$it…" else it
+                                }
                                 studioRepository.renameSession(active.id, conciseTitle)
                             }
                         }
@@ -892,19 +983,20 @@ class StudioViewModel(
                 } else {
                     for (idx in 0 until count) {
                         val itemStartMs = System.currentTimeMillis()
-                        val takeStart = ((idx.toFloat() / count) * 90f).toInt().coerceAtLeast(4)
+                        val takeStart = ((idx.toFloat() / count) * 90f).toInt().coerceAtLeast(8)
                         val takeSpan = (94f / count)
                         if (_generationProgressPercent.value < takeStart) {
                             _generationProgressPercent.value = takeStart
                         }
                         progressCeiling.value = (takeStart + takeSpan * 0.25f).toInt().coerceAtMost(94)
 
-                        val reelPrompt = if (count > 1) "$prompt (Take ${idx + 1})" else prompt
+                        val reelPrompt = if (count > 1) "${parsedIntent.originalPrompt} (Take ${idx + 1})" else parsedIntent.originalPrompt
                         val scenes = aiRepository.generateStoryboardReel(
                             prompt = reelPrompt,
                             aspect = aspect,
                             preferredModel = imageModel,
                             referenceBitmap = referenceBitmap,
+                            parsedIntent = parsedIntent.copy(originalPrompt = reelPrompt),
                             onSceneProgress = { sceneIndex, totalScenes, status ->
                                 _generationStatus.value = if (count > 1) {
                                     "Reel ${idx + 1}/$count • $status"
@@ -912,7 +1004,7 @@ class StudioViewModel(
                                     status
                                 }
                                 val stageFraction = ((sceneIndex + 1f) / (totalScenes + 1f)).coerceIn(0.25f, 0.98f)
-                                val milestone = (takeStart + takeSpan * stageFraction).toInt().coerceIn(5, 95)
+                                val milestone = (takeStart + takeSpan * stageFraction).toInt().coerceIn(8, 95)
                                 progressCeiling.value = milestone
                             }
                         )
@@ -920,9 +1012,9 @@ class StudioViewModel(
                         val coverPath = scenes.first().imageFilePath
                         val asset = StudioAssetEntity(
                             id = UUID.randomUUID().toString(),
-                            sessionId = sessionId,
+                            sessionId = resolvedSessionId,
                             kind = AssetKind.AI_STORYBOARD_REEL.name,
-                            prompt = prompt,
+                            prompt = parsedIntent.originalPrompt,
                             modelLabel = "${imageModel.displayName} • Reel",
                             aspectRatio = aspect.label,
                             primaryFilePath = coverPath,
@@ -934,13 +1026,15 @@ class StudioViewModel(
                         if (!recordedMeta) {
                             recordedMeta = true
                             studioRepository.recordPromptHistory(
-                                promptText = prompt,
+                                promptText = parsedIntent.originalPrompt,
                                 mediaMode = mode.name,
                                 aspectRatio = aspect.label,
                                 modelLabel = modelLabelForHistory
                             )
                             if (active != null && wasSessionEmpty) {
-                                val conciseTitle = prompt.take(28).let { if (prompt.length > 28) "$it…" else it }
+                                val conciseTitle = parsedIntent.cleanedSubject.take(28).let {
+                                    if (parsedIntent.cleanedSubject.length > 28) "$it…" else it
+                                }
                                 studioRepository.renameSession(active.id, conciseTitle)
                             }
                         }
@@ -949,6 +1043,7 @@ class StudioViewModel(
                     }
                 }
 
+                healthInspector.resetErrorTracking()
                 tickerJob.cancel()
                 _generationProgressPercent.value = 100
                 _generationStatus.value = "Complete"
@@ -967,7 +1062,17 @@ class StudioViewModel(
                 Log.w(TAG, "Firebase unavailable in this environment; skipping error banner.", e)
                 _isProgressExpanded.value = false
                 _lastError.value = null
-                _snackbarEvents.tryEmit("AI service unavailable: Firebase configuration missing in this build.")
+                val notice = "AI service unavailable: Firebase configuration missing in this build."
+                if (healthInspector.shouldEmitErrorMessage(notice)) {
+                    _snackbarEvents.tryEmit(notice)
+                }
+            } catch (e: AppCheckUnavailableException) {
+                Log.w(TAG, "App Check attestation unavailable after recovery", e)
+                _isProgressExpanded.value = false
+                val msg = e.localizedMessage ?: "App verification unavailable right now."
+                if (healthInspector.shouldEmitErrorMessage(msg)) {
+                    _lastError.value = msg
+                }
             } catch (e: Exception) {
                 if (PromptModerationGuard.isSafetyBlockException(e)) {
                     _isProgressExpanded.value = false
@@ -977,10 +1082,21 @@ class StudioViewModel(
                     _isProgressExpanded.value = false
                     if (FirebaseSafety.isFirebaseNotInitializedError(e)) {
                         _lastError.value = null
-                        _snackbarEvents.tryEmit("AI service unavailable: Firebase configuration missing in this build.")
+                        val notice = "AI service unavailable: Firebase configuration missing in this build."
+                        if (healthInspector.shouldEmitErrorMessage(notice)) {
+                            _snackbarEvents.tryEmit(notice)
+                        }
+                    } else if (isAppCheckTokenError(e)) {
+                        val msg = "App verification is unavailable right now. Please check Google Play services and try again."
+                        if (healthInspector.shouldEmitErrorMessage(msg)) {
+                            _lastError.value = msg
+                        }
                     } else {
-                        _lastError.value = e.localizedMessage
+                        val msg = e.localizedMessage
                             ?: "Generation failed. Please check your connection and try again."
+                        if (healthInspector.shouldEmitErrorMessage(msg)) {
+                            _lastError.value = msg
+                        }
                     }
                 }
             } finally {

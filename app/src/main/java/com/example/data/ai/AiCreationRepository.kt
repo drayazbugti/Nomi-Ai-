@@ -6,9 +6,15 @@ import android.graphics.Canvas
 import android.util.Log
 import com.caverock.androidsvg.SVG
 import com.example.core.FirebaseSafety
+import com.example.core.GenerationControlCoordinator
+import com.example.core.GenerationPhase
+import com.example.core.ParsedPromptIntent
 import com.example.core.PromptModerationGuard
+import com.example.core.PromptUnderstandingEngine
+import com.example.core.PromptUnderstandingResult
 import com.example.core.SilentPromptBlockedException
 import com.example.data.local.AspectOption
+import com.example.data.local.MediaMode
 import com.example.data.local.MediaStorageHelper
 import com.example.data.local.StoryboardScene
 import com.google.firebase.Firebase
@@ -20,17 +26,9 @@ import com.google.firebase.ai.type.SafetySetting
 import com.google.firebase.ai.type.Schema
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.generationConfig
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
-import java.io.IOException
-import java.net.ConnectException
-import java.net.SocketException
-import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "AiCreationRepository"
@@ -38,6 +36,11 @@ private const val REQUEST_TIMEOUT_MS = 60_000L
 
 class FirebaseNotConfiguredException(
     message: String = "Firebase is not configured in this build.",
+    cause: Throwable? = null
+) : IllegalStateException(message, cause)
+
+class AppCheckUnavailableException(
+    message: String = "App attestation could not be verified. Please ensure network access and Google Play services are available, or launch with a registered App Check debug token.",
     cause: Throwable? = null
 ) : IllegalStateException(message, cause)
 
@@ -138,23 +141,39 @@ class AiCreationRepository(
         }
     }
 
-    private fun isOfflineCause(throwable: Throwable): Boolean {
-        var cursor: Throwable? = throwable
-        while (cursor != null) {
-            if (cursor is UnknownHostException || cursor is ConnectException || cursor is SocketException) {
-                return true
-            }
-            val msg = cursor.message?.lowercase().orEmpty()
-            if (msg.contains("unable to resolve host") ||
-                msg.contains("failed to connect") ||
-                msg.contains("network is unreachable") ||
-                msg.contains("no address associated with hostname")
-            ) {
-                return true
-            }
-            cursor = cursor.cause
+    private fun sanitizeSvgDocument(svgRaw: String, width: Int, height: Int): String {
+        val startIdx = svgRaw.indexOf("<svg", ignoreCase = true)
+        val endIdx = svgRaw.lastIndexOf("</svg>", ignoreCase = true)
+        var cleaned = if (startIdx >= 0 && endIdx > startIdx) {
+            svgRaw.substring(startIdx, endIdx + "</svg>".length)
+        } else {
+            svgRaw.trim()
         }
-        return false
+
+        // Escape bare ampersands that break XML/SVG parsing
+        cleaned = cleaned.replace(
+            Regex("""&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)"""),
+            "&amp;"
+        )
+
+        // Ensure xmlns is present on root <svg> tag
+        val openTagEnd = cleaned.indexOf('>')
+        if (openTagEnd > 0) {
+            val openTag = cleaned.substring(0, openTagEnd)
+            val additions = buildString {
+                if (!openTag.contains("xmlns=", ignoreCase = true)) {
+                    append(""" xmlns="http://www.w3.org/2000/svg"""")
+                }
+                if (!openTag.contains("viewBox=", ignoreCase = true)) {
+                    append(""" viewBox="0 0 $width $height"""")
+                }
+            }
+            if (additions.isNotEmpty()) {
+                cleaned = openTag + additions + cleaned.substring(openTagEnd)
+            }
+        }
+
+        return cleaned
     }
 
     private suspend fun renderSvgToPng(
@@ -162,15 +181,8 @@ class AiCreationRepository(
         width: Int,
         height: Int
     ): String = withContext(Dispatchers.Default) {
-        val startIdx = svgRaw.indexOf("<svg", ignoreCase = true)
-        val endIdx = svgRaw.lastIndexOf("</svg>", ignoreCase = true)
-        val cleanedSvg = if (startIdx >= 0 && endIdx > startIdx) {
-            svgRaw.substring(startIdx, endIdx + "</svg>".length)
-        } else {
-            svgRaw.trim()
-        }
-
-        val svg = SVG.getFromString(cleanedSvg)
+        val sanitizedSvg = sanitizeSvgDocument(svgRaw, width, height)
+        val svg = SVG.getFromString(sanitizedSvg)
         svg.documentWidth = width.toFloat()
         svg.documentHeight = height.toFloat()
         if (svg.documentViewBox == null) {
@@ -188,16 +200,24 @@ class AiCreationRepository(
         modelOption: ImageModelOption,
         aspect: AspectOption,
         referenceBitmap: Bitmap? = null,
-        variationIndex: Int = 0
+        variationIndex: Int = 0,
+        parsedIntent: ParsedPromptIntent? = null,
+        onPhaseUpdate: (GenerationPhase, String) -> Unit = { _, _ -> }
     ): String {
-        if (PromptModerationGuard.isRestrictedPrompt(prompt)) {
+        val intent = parsedIntent ?: when (val analyzed = PromptUnderstandingEngine.analyze(prompt, MediaMode.IMAGE, aspect)) {
+            PromptUnderstandingResult.BlockedSilently -> throw SilentPromptBlockedException()
+            PromptUnderstandingResult.Empty -> throw IllegalArgumentException("Prompt cannot be empty.")
+            is PromptUnderstandingResult.Ready -> analyzed.intent
+        }
+        if (PromptModerationGuard.isRestrictedPrompt(intent.originalPrompt)) {
             throw SilentPromptBlockedException()
         }
         if (!FirebaseSafety.isInitialized(appContext)) {
             throw FirebaseNotConfiguredException()
         }
 
-        val (width, height) = when (aspect) {
+        val effectiveAspect = intent.resolvedAspect
+        val (width, height) = when (effectiveAspect) {
             AspectOption.LANDSCAPE_16_9 -> 1280 to 720
             AspectOption.PORTRAIT_9_16 -> 720 to 1280
         }
@@ -209,14 +229,17 @@ class AiCreationRepository(
         }
 
         val generationPrompt = """
-            You are a visual artist and SVG illustrator. Create a rich, detailed, cinematic SVG 1.1 illustration for:
-            "$prompt"
+            You are a visual artist and SVG illustrator. Create a rich, detailed, cinematic SVG 1.1 illustration that faithfully depicts the user's exact request:
+            User request: "${intent.originalPrompt}"
+            Parsed creative intent:
+            ${intent.directiveSummary}
             $variationHint
             Requirements:
+            - Match the user's exact subject, environment, action, lighting, colors, and style cues faithfully without substituting unrelated subjects.
             - Output an <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 $width $height" width="$width" height="$height"> document.
             - Fill the entire canvas with atmospheric background gradients (<linearGradient>, <radialGradient>), depth layers, lighting/glow effects, shadows, architectural/natural silhouettes, and detailed focal subject geometry using <rect>, <circle>, <ellipse>, <polygon>, <polyline>, and <path>.
             - Use pure SVG 1.1 attributes (fill, stroke, stroke-width, opacity, stop-color, stop-opacity). Do NOT use <foreignObject>, <script>, <image>, external URLs, or CSS filter:url().
-            - Make it visually striking, cohesive, and faithful to the prompt without placeholder watermarks.
+            - Make it visually striking, cohesive, and free of placeholder watermarks or text unless requested by the user.
         """.trimIndent()
 
         val modelSequence = listOf(
@@ -226,61 +249,38 @@ class AiCreationRepository(
             ImageModelOption.GEMINI_3_5_FLASH_LITE
         ).distinct()
 
-        var lastError: Exception? = null
-        for ((attempt, candidateModel) in modelSequence.withIndex()) {
+        val svgXml = GenerationControlCoordinator.executeWithModelFallback(
+            appContext = appContext,
+            models = modelSequence,
+            modelDisplayName = { it.displayName },
+            timeoutMs = REQUEST_TIMEOUT_MS,
+            onPhaseUpdate = onPhaseUpdate
+        ) { candidateModel ->
             val model = getSvgArtworkModelOrNull(candidateModel.modelId)
                 ?: throw FirebaseNotConfiguredException()
-            try {
-                val svgXml = withTimeout(REQUEST_TIMEOUT_MS) {
-                    val response = if (referenceBitmap != null) {
-                        model.generateContent(
-                            content {
-                                image(referenceBitmap)
-                                text("Use the visual style, colors, and composition of this reference image while illustrating: $generationPrompt")
-                            }
-                        )
-                    } else {
-                        model.generateContent(generationPrompt)
+            val response = if (referenceBitmap != null) {
+                model.generateContent(
+                    content {
+                        image(referenceBitmap)
+                        text("Use the visual style, colors, and composition of this reference image while illustrating: $generationPrompt")
                     }
-
-                    val jsonString = response.text
-                        ?: throw IllegalStateException("${candidateModel.displayName} returned an empty response.")
-                    val root = JSONObject(jsonString)
-                    val svg = root.optString("svg", "").trim()
-                    if (!svg.contains("<svg", ignoreCase = true)) {
-                        throw IllegalStateException("${candidateModel.displayName} returned invalid SVG artwork.")
-                    }
-                    svg
-                }
-                return renderSvgToPng(svgXml, width, height)
-            } catch (e: TimeoutCancellationException) {
-                Log.w(TAG, "Generation timed out on ${candidateModel.displayName}", e)
-                lastError = IllegalStateException("Request timed out on ${candidateModel.displayName}. Please try again.")
-                if (attempt < modelSequence.lastIndex) {
-                    delay(350L)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                if (PromptModerationGuard.isSafetyBlockException(e)) {
-                    throw SilentPromptBlockedException()
-                }
-                if (FirebaseSafety.isFirebaseNotInitializedError(e)) {
-                    throw FirebaseNotConfiguredException(cause = e)
-                }
-                if (isOfflineCause(e)) {
-                    Log.e(TAG, "Offline network error during image generation", e)
-                    throw IOException("No internet connection. Please check the internet connection.", e)
-                }
-                Log.w(TAG, "Attempt failed on ${candidateModel.displayName}, trying fallback if available", e)
-                lastError = e
-                if (attempt < modelSequence.lastIndex) {
-                    delay(400L)
-                }
+                )
+            } else {
+                model.generateContent(generationPrompt)
             }
+
+            val jsonString = response.text
+                ?: throw IllegalStateException("${candidateModel.displayName} returned an empty response.")
+            val root = JSONObject(jsonString)
+            val svg = root.optString("svg", "").trim()
+            if (!svg.contains("<svg", ignoreCase = true)) {
+                throw IllegalStateException("${candidateModel.displayName} returned invalid SVG artwork.")
+            }
+            svg
         }
 
-        throw lastError ?: IllegalStateException("Image generation failed.")
+        onPhaseUpdate(GenerationPhase.RENDERING_ASSET, modelOption.displayName)
+        return renderSvgToPng(svgXml, width, height)
     }
 
     suspend fun generateStoryboardReel(
@@ -288,90 +288,85 @@ class AiCreationRepository(
         aspect: AspectOption,
         preferredModel: ImageModelOption = ImageModelOption.GEMINI_4_HYDROGEN,
         referenceBitmap: Bitmap? = null,
+        parsedIntent: ParsedPromptIntent? = null,
         onSceneProgress: (Int, Int, String) -> Unit
     ): List<StoryboardScene> {
-        if (PromptModerationGuard.isRestrictedPrompt(prompt)) {
+        val intent = parsedIntent ?: when (val analyzed = PromptUnderstandingEngine.analyze(prompt, MediaMode.VIDEO, aspect)) {
+            PromptUnderstandingResult.BlockedSilently -> throw SilentPromptBlockedException()
+            PromptUnderstandingResult.Empty -> throw IllegalArgumentException("Prompt cannot be empty.")
+            is PromptUnderstandingResult.Ready -> analyzed.intent
+        }
+        if (PromptModerationGuard.isRestrictedPrompt(intent.originalPrompt)) {
             throw SilentPromptBlockedException()
         }
         if (!FirebaseSafety.isInitialized(appContext)) {
             throw FirebaseNotConfiguredException()
         }
-        onSceneProgress(0, 3, "Writing 3-scene storyboard with ${preferredModel.displayName}…")
 
-        val plannerModelIds = listOf(
-            preferredModel.modelId,
-            ImageModelOption.GEMINI_4_HYDROGEN.modelId,
-            ImageModelOption.GEMINI_3_8_FLASH.modelId,
-            ImageModelOption.GEMINI_3_5_FLASH_LITE.modelId
+        val effectiveAspect = intent.resolvedAspect
+        onSceneProgress(0, 3, "Understanding prompt & planning 3-scene reel with ${preferredModel.displayName}…")
+
+        val plannerModels = listOf(
+            preferredModel,
+            ImageModelOption.GEMINI_4_HYDROGEN,
+            ImageModelOption.GEMINI_3_8_FLASH,
+            ImageModelOption.GEMINI_3_5_FLASH_LITE
         ).distinct()
 
-        var plannedScenes: List<PlannedScene> = emptyList()
-        var plannerError: Exception? = null
-
-        for ((attempt, modelId) in plannerModelIds.withIndex()) {
-            val plannerModel = getStoryboardPlannerModelOrNull(modelId)
-                ?: throw FirebaseNotConfiguredException()
-            try {
-                plannedScenes = withTimeout(REQUEST_TIMEOUT_MS) {
-                    val plannerPrompt = """
-                        Create a cohesive 3-scene cinematic video storyboard in ${aspect.label} framing for this concept:
-                        "$prompt"
-                        Keep visual continuity consistent across all 3 scenes so each visualDescription works as a rich standalone visual frame prompt.
-                    """.trimIndent()
-
-                    val response = if (referenceBitmap != null) {
-                        plannerModel.generateContent(
-                            content {
-                                image(referenceBitmap)
-                                text(plannerPrompt)
-                            }
-                        )
-                    } else {
-                        plannerModel.generateContent(plannerPrompt)
-                    }
-
-                    val jsonString = response.text
-                        ?: throw IllegalStateException("Storyboard planner returned an empty response.")
-                    val root = JSONObject(jsonString)
-                    val scenesArray = root.getJSONArray("scenes")
-                    (0 until minOf(3, scenesArray.length())).map { i ->
-                        val obj = scenesArray.getJSONObject(i)
-                        PlannedScene(
-                            sceneNumber = obj.optInt("sceneNumber", i + 1),
-                            title = obj.optString("title", "Scene ${i + 1}"),
-                            cameraDirection = obj.optString("cameraDirection", "Smooth tracking shot"),
-                            visualDescription = obj.optString("visualDescription", prompt),
-                            durationSeconds = obj.optInt("durationSeconds", 3).coerceIn(2, 6)
-                        )
-                    }
-                }
-                if (plannedScenes.isNotEmpty()) break
-            } catch (e: TimeoutCancellationException) {
-                Log.w(TAG, "Storyboard planner timed out on $modelId", e)
-                plannerError = IllegalStateException("Storyboard planning timed out. Please try again.")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                if (PromptModerationGuard.isSafetyBlockException(e)) {
-                    throw SilentPromptBlockedException()
-                }
-                if (FirebaseSafety.isFirebaseNotInitializedError(e)) {
-                    throw FirebaseNotConfiguredException(cause = e)
-                }
-                if (isOfflineCause(e)) {
-                    Log.e(TAG, "Offline network error during storyboard planning", e)
-                    throw IOException("No internet connection. Please check the internet connection.", e)
-                }
-                Log.w(TAG, "Storyboard planner failed on $modelId", e)
-                plannerError = e
-                if (attempt < plannerModelIds.lastIndex) {
-                    delay(400L)
+        val plannedScenes = GenerationControlCoordinator.executeWithModelFallback(
+            appContext = appContext,
+            models = plannerModels,
+            modelDisplayName = { it.displayName },
+            timeoutMs = REQUEST_TIMEOUT_MS,
+            onPhaseUpdate = { phase, label ->
+                when (phase) {
+                    GenerationPhase.RECOVERING_ATTESTATION ->
+                        onSceneProgress(0, 3, "Verifying service connection…")
+                    GenerationPhase.RETRYING_FALLBACK ->
+                        onSceneProgress(0, 3, "Retrying storyboard with $label…")
+                    else -> Unit
                 }
             }
-        }
+        ) { candidateModel ->
+            val plannerModel = getStoryboardPlannerModelOrNull(candidateModel.modelId)
+                ?: throw FirebaseNotConfiguredException()
+            val plannerPrompt = """
+                Create a cohesive 3-scene cinematic video storyboard in ${effectiveAspect.label} framing that brings the user's exact idea to life:
+                User request: "${intent.originalPrompt}"
+                Parsed creative intent:
+                ${intent.directiveSummary}
+                Keep subjects, colors, environment, and visual continuity consistent across all 3 scenes so each visualDescription works as a vivid standalone frame matching the user's description.
+            """.trimIndent()
 
-        if (plannedScenes.isEmpty()) {
-            throw plannerError ?: IllegalStateException("Could not plan storyboard scenes for this prompt.")
+            val response = if (referenceBitmap != null) {
+                plannerModel.generateContent(
+                    content {
+                        image(referenceBitmap)
+                        text(plannerPrompt)
+                    }
+                )
+            } else {
+                plannerModel.generateContent(plannerPrompt)
+            }
+
+            val jsonString = response.text
+                ?: throw IllegalStateException("Storyboard planner returned an empty response.")
+            val root = JSONObject(jsonString)
+            val scenesArray = root.getJSONArray("scenes")
+            val parsed = (0 until minOf(3, scenesArray.length())).map { i ->
+                val obj = scenesArray.getJSONObject(i)
+                PlannedScene(
+                    sceneNumber = obj.optInt("sceneNumber", i + 1),
+                    title = obj.optString("title", "Scene ${i + 1}"),
+                    cameraDirection = obj.optString("cameraDirection", intent.cameraFraming ?: "Smooth tracking shot"),
+                    visualDescription = obj.optString("visualDescription", intent.cleanedSubject),
+                    durationSeconds = obj.optInt("durationSeconds", 3).coerceIn(2, 6)
+                )
+            }
+            if (parsed.isEmpty()) {
+                throw IllegalStateException("Could not plan storyboard scenes for this prompt.")
+            }
+            parsed
         }
 
         val renderedScenes = mutableListOf<StoryboardScene>()
@@ -382,12 +377,18 @@ class AiCreationRepository(
                 "Rendering keyframe ${idx + 1}/${plannedScenes.size}: ${planned.title}…"
             )
             val framePrompt = "${planned.visualDescription}. Cinematic framing, ${planned.cameraDirection}, cohesive lighting."
+            val frameIntent = intent.copy(
+                originalPrompt = framePrompt,
+                cleanedSubject = planned.visualDescription,
+                cameraFraming = planned.cameraDirection
+            )
             val framePath = generateImageAsset(
                 prompt = framePrompt,
                 modelOption = preferredModel,
-                aspect = aspect,
+                aspect = effectiveAspect,
                 referenceBitmap = if (idx == 0) referenceBitmap else null,
-                variationIndex = 0
+                variationIndex = 0,
+                parsedIntent = frameIntent
             )
             renderedScenes.add(
                 StoryboardScene(
