@@ -109,6 +109,7 @@ import androidx.compose.foundation.verticalScroll
 import coil.compose.AsyncImage
 import com.example.BuildConfig
 import com.example.R
+import com.example.core.AppReleaseConfig
 import com.example.data.ai.ImageModelOption
 import com.example.data.ai.VideoModelOption
 import com.example.data.local.AspectOption
@@ -1673,11 +1674,6 @@ fun ExpandedGenerationProgressDialog(
     }
 }
 
-private const val GITHUB_LATEST_APK_URL =
-    "https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/latest/download/NoomiAI-v1.0.apk"
-private const val GITHUB_LATEST_RELEASE_URL =
-    "https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/latest"
-
 @Composable
 fun DownloadApkDialog(
     onDismiss: () -> Unit
@@ -1736,7 +1732,7 @@ fun DownloadApkDialog(
                 }
 
                 Button(
-                    onClick = { uriHandler.openUri(GITHUB_LATEST_APK_URL) },
+                    onClick = { uriHandler.openUri(AppReleaseConfig.APK_DOWNLOAD_URL) },
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
@@ -1754,13 +1750,13 @@ fun DownloadApkDialog(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Download Latest APK (v${BuildConfig.VERSION_NAME})",
+                        text = "Download Latest APK (v${AppReleaseConfig.VERSION_NAME})",
                         style = MaterialTheme.typography.labelLarge
                     )
                 }
 
                 OutlinedButton(
-                    onClick = { uriHandler.openUri(GITHUB_LATEST_RELEASE_URL) },
+                    onClick = { uriHandler.openUri(AppReleaseConfig.LATEST_RELEASE_URL) },
                     shape = CircleShape,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                     modifier = Modifier
@@ -1797,11 +1793,11 @@ fun DownloadApkDialog(
                         )
                         DownloadDetailRow(
                             label = "Version",
-                            value = "${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})"
+                            value = "${AppReleaseConfig.VERSION_NAME} (Build ${AppReleaseConfig.VERSION_CODE})"
                         )
                         DownloadDetailRow(
                             label = "Package ID",
-                            value = BuildConfig.APPLICATION_ID
+                            value = AppReleaseConfig.PACKAGE_ID
                         )
                         DownloadDetailRow(
                             label = "Minimum Android",
@@ -1809,7 +1805,7 @@ fun DownloadApkDialog(
                         )
                         DownloadDetailRow(
                             label = "Release Asset",
-                            value = "NoomiAI-v1.0.apk"
+                            value = AppReleaseConfig.APK_FILE_NAME
                         )
                     }
                 }

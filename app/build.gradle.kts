@@ -20,6 +20,17 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    buildConfigField(
+      "String",
+      "APK_DOWNLOAD_URL",
+      "\"https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/latest/download/NoomiAI-v1.0.apk\""
+    )
+    buildConfigField(
+      "String",
+      "LATEST_RELEASE_URL",
+      "\"https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/latest\""
+    )
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
