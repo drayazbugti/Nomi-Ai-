@@ -17,11 +17,9 @@ import com.example.core.PromptUnderstandingEngine
 import com.example.core.PromptUnderstandingResult
 import com.example.core.ServiceReadinessStatus
 import com.example.core.SilentPromptBlockedException
-import com.example.core.isAppCheckTokenError
 import com.example.core.safeCurrentUser
 import com.example.data.StudioRepository
 import com.example.data.ai.AiCreationRepository
-import com.example.data.ai.AppCheckUnavailableException
 import com.example.data.ai.FirebaseNotConfiguredException
 import com.example.data.ai.ImageModelOption
 import com.example.data.ai.VideoModelOption
@@ -937,7 +935,6 @@ class StudioViewModel(
                             parsedIntent = parsedIntent,
                             onPhaseUpdate = { phase, label ->
                                 _generationStatus.value = when (phase) {
-                                    GenerationPhase.RECOVERING_ATTESTATION -> "Verifying service connection…"
                                     GenerationPhase.RETRYING_FALLBACK -> "Refining image with $label…"
                                     GenerationPhase.RENDERING_ASSET -> "Rendering final image…"
                                     else -> if (count > 1) {
@@ -1066,13 +1063,6 @@ class StudioViewModel(
                 if (healthInspector.shouldEmitErrorMessage(notice)) {
                     _snackbarEvents.tryEmit(notice)
                 }
-            } catch (e: AppCheckUnavailableException) {
-                Log.w(TAG, "App Check attestation unavailable after recovery", e)
-                _isProgressExpanded.value = false
-                val msg = e.localizedMessage ?: "App verification unavailable right now."
-                if (healthInspector.shouldEmitErrorMessage(msg)) {
-                    _lastError.value = msg
-                }
             } catch (e: Exception) {
                 if (PromptModerationGuard.isSafetyBlockException(e)) {
                     _isProgressExpanded.value = false
@@ -1085,11 +1075,6 @@ class StudioViewModel(
                         val notice = "AI service unavailable: Firebase configuration missing in this build."
                         if (healthInspector.shouldEmitErrorMessage(notice)) {
                             _snackbarEvents.tryEmit(notice)
-                        }
-                    } else if (isAppCheckTokenError(e)) {
-                        val msg = "App verification is unavailable right now. Please check Google Play services and try again."
-                        if (healthInspector.shouldEmitErrorMessage(msg)) {
-                            _lastError.value = msg
                         }
                     } else {
                         val msg = e.localizedMessage

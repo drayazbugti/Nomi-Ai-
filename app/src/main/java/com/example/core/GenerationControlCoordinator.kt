@@ -1,8 +1,6 @@
 package com.example.core
 
-import android.content.Context
 import android.util.Log
-import com.example.data.ai.AppCheckUnavailableException
 import com.example.data.ai.FirebaseNotConfiguredException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -17,16 +15,15 @@ enum class GenerationPhase {
     SELF_CHECKING,
     UNDERSTANDING_PROMPT,
     REQUESTING_MODEL,
-    RECOVERING_ATTESTATION,
     RETRYING_FALLBACK,
     RENDERING_ASSET,
     COMPLETED
 }
 
 /**
- * Coordinates model selection, bounded retries, automatic App Check recovery,
- * offline short-circuiting, and fallback model progression so valid requests
- * complete smoothly without cascading repeated errors.
+ * Coordinates model selection, bounded retries, offline short-circuiting,
+ * and fallback model progression so valid requests complete smoothly
+ * without App Check attestation checks or cascading repeated errors.
  */
 object GenerationControlCoordinator {
 
@@ -53,7 +50,6 @@ object GenerationControlCoordinator {
     }
 
     suspend fun <M, R> executeWithModelFallback(
-        appContext: Context,
         models: List<M>,
         modelDisplayName: (M) -> String,
         timeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS,
@@ -61,16 +57,14 @@ object GenerationControlCoordinator {
         block: suspend (M) -> R
     ): R {
         var lastError: Exception? = null
-        var attemptedAppCheckRecovery = false
 
         for ((index, candidate) in models.withIndex()) {
             val label = modelDisplayName(candidate)
-            var retriedAppCheckForCandidate = false
             var transientAttemptForCandidate = 0
 
             while (true) {
                 try {
-                    val phase = if (index == 0 && transientAttemptForCandidate == 0 && !retriedAppCheckForCandidate) {
+                    val phase = if (index == 0 && transientAttemptForCandidate == 0) {
                         GenerationPhase.REQUESTING_MODEL
                     } else {
                         GenerationPhase.RETRYING_FALLBACK
@@ -103,26 +97,11 @@ object GenerationControlCoordinator {
                         Log.e(TAG, "Offline network error during generation", e)
                         throw IOException("No internet connection. Please check the internet connection.", e)
                     }
-                    if (isAppCheckTokenError(e)) {
-                        Log.w(TAG, "App Check token rejected on $label", e)
-                        if (!attemptedAppCheckRecovery && !retriedAppCheckForCandidate) {
-                            attemptedAppCheckRecovery = true
-                            retriedAppCheckForCandidate = true
-                            onPhaseUpdate(GenerationPhase.RECOVERING_ATTESTATION, label)
-                            val recovered = recoverAppCheckOnInvalidToken(appContext)
-                            if (recovered) {
-                                delay(250L)
-                                continue
-                            }
-                        }
-                        throw AppCheckUnavailableException(cause = e)
-                    }
 
                     Log.w(TAG, "Generation attempt failed on $label", e)
                     lastError = e
                     transientAttemptForCandidate++
 
-                    // Retry once on the primary model for transient format glitches, then advance to fallback model
                     if (index == 0 && transientAttemptForCandidate == 1) {
                         delay(250L)
                         continue

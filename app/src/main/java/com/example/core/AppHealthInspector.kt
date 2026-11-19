@@ -1,19 +1,9 @@
 package com.example.core
 
 import android.content.Context
-import android.util.Log
 import com.example.data.local.AspectOption
 import com.example.data.local.MediaMode
-import com.google.firebase.appcheck.FirebaseAppCheck
-import kotlinx.coroutines.tasks.await
 import java.util.concurrent.ConcurrentHashMap
-
-enum class AppCheckReadiness {
-    READY_DEBUG_INTENT,
-    READY_RECAPTCHA,
-    RECOVERED,
-    UNAVAILABLE
-}
 
 enum class ServiceReadinessStatus {
     READY,
@@ -26,7 +16,6 @@ enum class ServiceReadinessStatus {
 data class AppHealthReport(
     val isOnline: Boolean,
     val isFirebaseReady: Boolean,
-    val appCheckReadiness: AppCheckReadiness,
     val hasActiveSession: Boolean,
     val activeGenerationCount: Int,
     val readinessStatus: ServiceReadinessStatus,
@@ -35,11 +24,10 @@ data class AppHealthReport(
 
 /**
  * Runtime self-check algorithm that verifies connectivity, Firebase initialization,
- * App Check readiness, session availability, and duplicate/error cooldown state
- * before dispatching generation requests.
+ * session availability, and duplicate/error cooldown state before dispatching generation requests.
  */
 class AppHealthInspector(
-    private val context: Context,
+    context: Context,
     private val networkObserver: NetworkConnectivityObserver
 ) {
     private val appContext = context.applicationContext ?: context
@@ -52,7 +40,6 @@ class AppHealthInspector(
     private var lastErrorTimestampMs: Long = 0L
 
     companion object {
-        private const val TAG = "AppHealthInspector"
         private const val DUPLICATE_SUBMIT_WINDOW_MS = 1_200L
         private const val ERROR_DEDUP_WINDOW_MS = 3_500L
     }
@@ -72,7 +59,6 @@ class AppHealthInspector(
             return AppHealthReport(
                 isOnline = networkObserver.isCurrentlyOnline(),
                 isFirebaseReady = FirebaseSafety.isInitialized(appContext),
-                appCheckReadiness = AppCheckReadiness.UNAVAILABLE,
                 hasActiveSession = !activeSessionId.isNullOrBlank(),
                 activeGenerationCount = activeGenerationCount,
                 readinessStatus = ServiceReadinessStatus.SKIPPED_DUPLICATE,
@@ -90,7 +76,6 @@ class AppHealthInspector(
             return AppHealthReport(
                 isOnline = false,
                 isFirebaseReady = FirebaseSafety.isInitialized(appContext),
-                appCheckReadiness = AppCheckReadiness.UNAVAILABLE,
                 hasActiveSession = !activeSessionId.isNullOrBlank(),
                 activeGenerationCount = activeGenerationCount,
                 readinessStatus = ServiceReadinessStatus.BLOCKED_OFFLINE,
@@ -114,7 +99,6 @@ class AppHealthInspector(
             return AppHealthReport(
                 isOnline = true,
                 isFirebaseReady = false,
-                appCheckReadiness = AppCheckReadiness.UNAVAILABLE,
                 hasActiveSession = !activeSessionId.isNullOrBlank(),
                 activeGenerationCount = activeGenerationCount,
                 readinessStatus = ServiceReadinessStatus.BLOCKED_UNCONFIGURED,
@@ -122,14 +106,11 @@ class AppHealthInspector(
             )
         }
 
-        // 3. Check App Check readiness and proactively recover if token exchange fails
-        val appCheckState = inspectAndRecoverAppCheck()
-
-        // 4. Ensure active project session is available
+        // 3. Ensure active project session is available
         val resolvedSessionId = activeSessionId ?: runCatching { ensureSessionReady() }.getOrNull()
         val hasSession = !resolvedSessionId.isNullOrBlank()
 
-        val status = if (firebaseRecovered || appCheckState == AppCheckReadiness.RECOVERED) {
+        val status = if (firebaseRecovered) {
             ServiceReadinessStatus.RECOVERED_AND_READY
         } else {
             ServiceReadinessStatus.READY
@@ -138,7 +119,6 @@ class AppHealthInspector(
         return AppHealthReport(
             isOnline = true,
             isFirebaseReady = true,
-            appCheckReadiness = appCheckState,
             hasActiveSession = hasSession,
             activeGenerationCount = activeGenerationCount,
             readinessStatus = status
@@ -158,20 +138,5 @@ class AppHealthInspector(
     fun resetErrorTracking() {
         lastErrorSignature = null
         lastErrorTimestampMs = 0L
-    }
-
-    private suspend fun inspectAndRecoverAppCheck(): AppCheckReadiness {
-        val firebaseApp = FirebaseSafety.getDefaultAppOrNull(appContext) ?: return AppCheckReadiness.UNAVAILABLE
-        val appCheck = runCatching { FirebaseAppCheck.getInstance(firebaseApp) }.getOrNull()
-            ?: return AppCheckReadiness.UNAVAILABLE
-
-        val tokenResult = runCatching { appCheck.getAppCheckToken(false).await() }.getOrNull()
-        if (tokenResult != null && tokenResult.token.isNotBlank()) {
-            return AppCheckReadiness.READY_RECAPTCHA
-        }
-
-        Log.w(TAG, "App Check token unavailable or empty during preflight; attempting proactive recovery.")
-        val recovered = recoverAppCheckOnInvalidToken(appContext)
-        return if (recovered) AppCheckReadiness.RECOVERED else AppCheckReadiness.UNAVAILABLE
     }
 }

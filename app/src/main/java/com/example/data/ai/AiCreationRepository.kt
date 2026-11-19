@@ -39,11 +39,6 @@ class FirebaseNotConfiguredException(
     cause: Throwable? = null
 ) : IllegalStateException(message, cause)
 
-class AppCheckUnavailableException(
-    message: String = "App attestation could not be verified. Please ensure network access and Google Play services are available, or launch with a registered App Check debug token.",
-    cause: Throwable? = null
-) : IllegalStateException(message, cause)
-
 data class PlannedScene(
     val sceneNumber: Int,
     val title: String,
@@ -250,7 +245,6 @@ class AiCreationRepository(
         ).distinct()
 
         val svgXml = GenerationControlCoordinator.executeWithModelFallback(
-            appContext = appContext,
             models = modelSequence,
             modelDisplayName = { it.displayName },
             timeoutMs = REQUEST_TIMEOUT_MS,
@@ -314,17 +308,12 @@ class AiCreationRepository(
         ).distinct()
 
         val plannedScenes = GenerationControlCoordinator.executeWithModelFallback(
-            appContext = appContext,
             models = plannerModels,
             modelDisplayName = { it.displayName },
             timeoutMs = REQUEST_TIMEOUT_MS,
             onPhaseUpdate = { phase, label ->
-                when (phase) {
-                    GenerationPhase.RECOVERING_ATTESTATION ->
-                        onSceneProgress(0, 3, "Verifying service connection…")
-                    GenerationPhase.RETRYING_FALLBACK ->
-                        onSceneProgress(0, 3, "Retrying storyboard with $label…")
-                    else -> Unit
+                if (phase == GenerationPhase.RETRYING_FALLBACK) {
+                    onSceneProgress(0, 3, "Retrying storyboard with $label…")
                 }
             }
         ) { candidateModel ->
