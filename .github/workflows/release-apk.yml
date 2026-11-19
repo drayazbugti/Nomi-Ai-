@@ -19,6 +19,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Sync repository slug in download links if needed
+        run: |
+          EXPECTED_REPO="drayazbugti/nomi-ai-video-and-image-generate"
+          ACTUAL_REPO="${{ github.repository }}"
+          if [ "$ACTUAL_REPO" != "$EXPECTED_REPO" ]; then
+            sed -i "s|$EXPECTED_REPO|$ACTUAL_REPO|g" download/README.md README.md
+            if ! git diff --quiet download/README.md README.md; then
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git add download/README.md README.md
+              git commit -m "Update APK download links for $ACTUAL_REPO [skip ci]"
+              git push origin "HEAD:${{ github.ref_name }}" || true
+            fi
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -59,22 +74,22 @@ jobs:
           name: NoomiAI-v1.0-apk
           path: NoomiAI-v1.0.apk
 
-      - name: Move latest release tag to current commit
+      - name: Point v1.0 release tag to current commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f latest
-          git push origin refs/tags/latest --force
+          git tag -f v1.0
+          git push origin refs/tags/v1.0 --force
 
       - name: Publish direct APK to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
+          tag_name: v1.0
           name: Noomi AI v1.0
           body: |
             Latest build of **Noomi AI** (`com.aistudio.noomiai.krmvqt`, v1.0 / Build 1).
 
-            [Download NoomiAI-v1.0.apk](https://github.com/${{ github.repository }}/releases/latest/download/NoomiAI-v1.0.apk)
+            [Download NoomiAI-v1.0.apk](https://github.com/${{ github.repository }}/releases/download/v1.0/NoomiAI-v1.0.apk)
           files: NoomiAI-v1.0.apk
           draft: false
           prerelease: false

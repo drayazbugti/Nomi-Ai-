@@ -4,9 +4,11 @@ AI creative studio for generating images and storyboard reels on Android.
 
 ## Direct APK Download
 
-[Download NoomiAI-v1.0.apk](https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/latest/download/NoomiAI-v1.0.apk)
+Open the **[download](download/README.md)** folder or click directly below:
 
-- **Version:** `1.0` (Build `1`)
+[Download NoomiAI-v1.0.apk](https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/download/v1.0/NoomiAI-v1.0.apk)
+
+- **Latest Release Shortcut:** [Download Latest NoomiAI-v1.0.apk](https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/latest/download/NoomiAI-v1.0.apk)
+- **Release Tag:** [v1.0](https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/tag/v1.0)
 - **Package ID:** `com.aistudio.noomiai.krmvqt`
 - **Minimum Android:** Android 7.0+ (API 24)
-- **Release Asset Page:** [View Latest Release](https://github.com/drayazbugti/nomi-ai-video-and-image-generate/releases/latest)
